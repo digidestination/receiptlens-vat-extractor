@@ -50,7 +50,7 @@ const extractFuelFieldsFromText = (txt) => {
   };
 
   const totalMatch = t.match(/(?:total|amount|sum|payable|eur|€)\s*[:\-]?\s*([0-9]+[.,][0-9]{1,2})/i) || t.match(/([0-9]+[.,][0-9]{2})\s*(?:€|eur)/i);
-  const priceMatch = t.match(/(?:price\s*\/\s*l|price\s*per\s*liter|€/\s*l|eur\s*\/\s*l|unit\s*price)\s*[:\-]?\s*([0-9]+[.,][0-9]{2,3})/i);
+  const priceMatch = t.match(/(?:price\s*\/\s*l|price\s*per\s*liter|€\s*\/\s*l|eur\s*\/\s*l|unit\s*price)\s*[:\-]?\s*([0-9]+[.,][0-9]{2,3})/i);
   const litersMatch = t.match(/(?:liters|litres|l)\s*[:\-]?\s*([0-9]+[.,][0-9]{2,3})/i) || t.match(/([0-9]+[.,][0-9]{2,3})\s*(?:liters|litres|l)\b/i);
 
   return {
@@ -273,22 +273,29 @@ app.post('/upload', upload.array('docs', 20), async (req, res) => {
   Object.entries(fields).forEach(([k, v]) => { if (v) qs.set(k, String(v)); });
   const prefillUrl = `/track${qs.toString() ? `?${qs.toString()}` : ''}`;
 
-  res.send(shell('Upload Complete', `
-    <h1>Receipt uploaded</h1>
-    <p class='muted'>Uploaded <strong>${mapped.length}</strong> file(s) successfully.</p>
+  res.send(shell('Confirm Extracted Data', `
+    <h1>Confirm extracted receipt data</h1>
+    <p class='muted'>Uploaded <strong>${mapped.length}</strong> file(s). Review and confirm values below.</p>
     ${mapped.length ? `<div class='card'><h3>Uploaded files</h3><ul>${list}</ul></div>` : ''}
+
     <div class='card'>
-      <h3>OCR extracted fields</h3>
-      <table><tbody>
-        <tr><th>Date</th><td>${fields.date || '—'}</td></tr>
-        <tr><th>Gas Station</th><td>${fields.station || '—'}</td></tr>
-        <tr><th>Total (€)</th><td>${fields.total || '—'}</td></tr>
-        <tr><th>Price per Liter (€)</th><td>${fields.pricePerLiter || '—'}</td></tr>
-        <tr><th>Total Liters</th><td>${fields.liters || '—'}</td></tr>
-      </tbody></table>
+      <h3>Extracted fields (editable)</h3>
+      <form action='/fuel' method='post' class='grid-2'>
+        <div><label>Date</label><input type='date' name='date' value='${fields.date || ''}' required></div>
+        <div><label>Gas Station</label><input name='station' value='${(fields.station || '').replace(/'/g, '&#39;')}' required></div>
+        <div><label>Total (€)</label><input name='total' value='${fields.total || ''}' required></div>
+        <div><label>Price per Liter (€)</label><input name='pricePerLiter' value='${fields.pricePerLiter || ''}' required></div>
+        <div><label>Total Liters</label><input name='liters' value='${fields.liters || ''}' required></div>
+        <div><label>Odometer (km)</label><input name='odometer' placeholder='optional'></div>
+        <div><label>Estimated km with current fuel</label><input name='kmEstimate' placeholder='optional'></div>
+        <div style='align-self:end'><button class='btn' type='submit'>Confirm & Save</button></div>
+      </form>
       ${ocrError ? `<p class='muted'>${ocrError}</p>` : ''}
-      <p><a class='btn' href='${prefillUrl}'>Use extracted values in Track Fuel</a></p>
-      <p class='muted'>You can edit anything before saving.</p>
+      <p class='muted'>Tip: if one field is wrong, just edit it and save.</p>
+    </div>
+
+    <div class='card'>
+      <p><a class='btn alt' href='/track'>Skip and go to manual entry</a></p>
     </div>
   `));
 });
