@@ -122,6 +122,8 @@ if (!fs.existsSync(dataFile)) {
   fs.writeFileSync(dataFile, JSON.stringify({ fuelEntries: [], reminders: [] }, null, 2));
 }
 
+const uploadJobs = new Map();
+
 const readDb = () => JSON.parse(fs.readFileSync(dataFile, 'utf-8'));
 const writeDb = (db) => fs.writeFileSync(dataFile, JSON.stringify(db, null, 2));
 
@@ -278,27 +280,15 @@ app.get('/dashboard', (_, res) => {
   `));
 });
 
-app.post('/upload', upload.array('docs', 20), async (req, res) => {
-  const files = req.files || [];
-  const mapped = files.map(f => ({ name: f.originalname, savedAs: f.filename, size: f.size, path: f.path }));
-  const list = mapped.map(f => `<li>${f.name} (${Math.round((f.size||0)/1024)} KB)</li>`).join('');
-
-  let fields = { date: '', station: '', total: '', pricePerLiter: '', liters: '' };
-  let ocrError = '';
-  if (mapped[0]) {
-    const out = await ocrExtractFields(mapped[0].path);
-    fields = { ...fields, ...(out.fields || {}) };
-    ocrError = out.error || '';
-  }
-
-  const qs = new URLSearchParams();
-  Object.entries(fields).forEach(([k, v]) => { if (v) qs.set(k, String(v)); });
-  const prefillUrl = `/track${qs.toString() ? `?${qs.toString()}` : ''}`;
-
-  res.send(shell('Confirm Extracted Data', `
+const renderConfirmPage = (job) => {
+  const files = job.files || [];
+  const fields = job.fields || { date: '', station: '', total: '', pricePerLiter: '', liters: '' };
+  const ocrError = job.error || '';
+  const list = files.map(f => `<li>${f.name} (${Math.round((f.size||0)/1024)} KB)</li>`).join('');
+  return shell('Confirm Extracted Data', `
     <h1>Confirm extracted receipt data</h1>
-    <p class='muted'>Uploaded <strong>${mapped.length}</strong> file(s). Review and confirm values below.</p>
-    ${mapped.length ? `<div class='card'><h3>Uploaded files</h3><ul>${list}</ul></div>` : ''}
+    <p class='muted'>Uploaded <strong>${files.length}</strong> file(s). Review and confirm values below.</p>
+    ${files.length ? `<div class='card'><h3>Uploaded files</h3><ul>${list}</ul></div>` : ''}
 
     <div class='card'>
       <h3>Extracted fields (editable)</h3>
@@ -319,7 +309,82 @@ app.post('/upload', upload.array('docs', 20), async (req, res) => {
     <div class='card'>
       <p><a class='btn alt' href='/track'>Skip and go to manual entry</a></p>
     </div>
+  `);
+};
+
+app.post('/upload', upload.array('docs', 20), (req, res) => {
+  const files = (req.files || []).map(f => ({ name: f.originalname, savedAs: f.filename, size: f.size, path: f.path }));
+  const id = Date.now().toString(36);
+  uploadJobs.set(id, {
+    id,
+    stage: 'uploaded',
+    files,
+    fields: { date: '', station: '', total: '', pricePerLiter: '', liters: '' },
+    error: ''
+  });
+
+  (async () => {
+    const job = uploadJobs.get(id);
+    if (!job) return;
+    job.stage = 'processing';
+    if (files[0]) {
+      const out = await ocrExtractFields(files[0].path);
+      job.fields = { ...job.fields, ...(out.fields || {}) };
+      job.error = out.error || '';
+    }
+    job.stage = 'matched';
+    setTimeout(() => { if (uploadJobs.has(id)) uploadJobs.delete(id); }, 1000 * 60 * 30);
+  })();
+
+  res.redirect(`/upload-progress/${id}`);
+});
+
+app.get('/upload-progress/:id', (req, res) => {
+  const id = req.params.id;
+  const job = uploadJobs.get(id);
+  if (!job) return res.redirect('/track');
+  res.send(shell('Processing receipt', `
+    <h1>Processing your receipt</h1>
+    <div class='card'>
+      <ul id='steps'>
+        <li id='s1'>✅ Image uploaded to server</li>
+        <li id='s2'>⏳ OCR processing in progress</li>
+        <li id='s3'>⏳ Matching fuel fields</li>
+      </ul>
+      <p class='muted' id='hint'>Please wait...</p>
+    </div>
+    <script>
+      const poll = async () => {
+        const r = await fetch('/upload-status/${id}');
+        const j = await r.json();
+        if (!j.ok) { document.getElementById('hint').textContent='Session expired. Please upload again.'; return; }
+        if (j.stage === 'processing') {
+          document.getElementById('s2').textContent = '⏳ OCR processing in progress';
+        }
+        if (j.stage === 'matched') {
+          document.getElementById('s2').textContent = '✅ OCR processing completed';
+          document.getElementById('s3').textContent = '✅ Data matched and populated';
+          document.getElementById('hint').textContent = 'Done. Redirecting...';
+          setTimeout(()=>location.href='/upload-confirm/${id}', 500);
+          return;
+        }
+        setTimeout(poll, 800);
+      };
+      poll();
+    </script>
   `));
+});
+
+app.get('/upload-status/:id', (req, res) => {
+  const job = uploadJobs.get(req.params.id);
+  if (!job) return res.json({ ok: false });
+  res.json({ ok: true, stage: job.stage });
+});
+
+app.get('/upload-confirm/:id', (req, res) => {
+  const job = uploadJobs.get(req.params.id);
+  if (!job) return res.redirect('/track');
+  res.send(renderConfirmPage(job));
 });
 
 app.get('/health', (_, res) => res.json({ ok: true }));
