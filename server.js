@@ -77,11 +77,15 @@ const ocrExtractFields = async (filePath) => {
     payload.append('language', 'eng');
     payload.append('isOverlayRequired', 'false');
 
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
     const resp = await fetch('https://api.ocr.space/parse/image', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: payload.toString()
+      body: payload.toString(),
+      signal: controller.signal
     });
+    clearTimeout(timer);
     const data = await resp.json();
     const parsedText = (data?.ParsedResults || []).map(x => x?.ParsedText || '').join('\n');
     const fields = extractFuelFieldsFromText(parsedText);
@@ -165,8 +169,8 @@ app.get('/track', (req, res) => {
     <h1>Fuel Tracking</h1>
     <div class='card'>
       <h3>Upload Fuel Receipt</h3>
-      <form action='/upload' method='post' enctype='multipart/form-data'>
-        <input type='file' name='docs' multiple accept='.pdf,.jpg,.jpeg,.png'>
+      <form action='/upload' method='post' enctype='multipart/form-data' onsubmit="const b=this.querySelector('button'); b.disabled=true; b.textContent='Uploading...';">
+        <input type='file' name='docs' multiple accept='.pdf,.jpg,.jpeg,.png' required>
         <p class='muted'>OCR tries to auto-fill receipt date, station, total, €/L and liters (best with clear photos).</p>
         <p><button class='btn' type='submit'>Upload</button></p>
       </form>
