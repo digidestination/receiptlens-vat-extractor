@@ -49,9 +49,17 @@ const extractFuelFieldsFromText = (txt) => {
     return cleaned && !isNaN(Number(cleaned)) ? Number(cleaned).toFixed(2) : '';
   };
 
-  const totalMatch = t.match(/(?:total|amount|sum|payable|eur|€)\s*[:\-]?\s*([0-9]+[.,][0-9]{1,2})/i) || t.match(/([0-9]+[.,][0-9]{2})\s*(?:€|eur)/i);
-  const priceMatch = t.match(/(?:price\s*\/\s*l|price\s*per\s*liter|€\s*\/\s*l|eur\s*\/\s*l|unit\s*price)\s*[:\-]?\s*([0-9]+[.,][0-9]{2,3})/i);
-  const litersMatch = t.match(/(?:liters|litres|l)\s*[:\-]?\s*([0-9]+[.,][0-9]{2,3})/i) || t.match(/([0-9]+[.,][0-9]{2,3})\s*(?:liters|litres|l)\b/i);
+  const totalMatch =
+    t.match(/(?:total\s+amount|total|amount|sum|payable)\s*[:\-]?\s*(?:eur|€)?\s*([0-9]+[.,][0-9]{1,2})/i) ||
+    t.match(/([0-9]+[.,][0-9]{2})\s*(?:€|eur)\b/i);
+
+  const priceMatch =
+    t.match(/(?:price\s*\/\s*l|price\s*per\s*liter|unit\s*price)\s*[:\-]?\s*(?:eur|€)?\s*([0-9]+[.,][0-9]{2,3})/i) ||
+    t.match(/(?:eur|€)\s*\/\s*l\s*[:\-]?\s*([0-9]+[.,][0-9]{2,3})/i);
+
+  const litersMatch =
+    t.match(/(?:quantity|qty|liters|litres|\bl\b)\s*[:\-]?\s*([0-9]+[.,][0-9]{2,3})/i) ||
+    t.match(/([0-9]+[.,][0-9]{2,3})\s*(?:liters|litres|\bl\b)/i);
 
   return {
     date,
