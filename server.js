@@ -43,30 +43,40 @@ const extractFuelFieldsFromText = (txt) => {
   const lines = t.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
   const station = lines.find(l => /(eko|petrolina|shell|bp|lukoil|agip|eni|texaco|fuel|station)/i.test(l)) || '';
 
-  const num = (s) => {
-    if (!s) return '';
-    const cleaned = s.replace(',', '.').replace(/[^0-9.]/g, '');
-    return cleaned && !isNaN(Number(cleaned)) ? Number(cleaned).toFixed(2) : '';
+  const toNum = (s) => {
+    if (s === undefined || s === null || s === '') return NaN;
+    const cleaned = String(s).replace(',', '.').replace(/[^0-9.]/g, '');
+    return cleaned && !isNaN(Number(cleaned)) ? Number(cleaned) : NaN;
   };
+  const toStr2 = (n) => (isNaN(n) ? '' : n.toFixed(2));
 
   const totalMatch =
     t.match(/(?:total\s+amount|total|amount|sum|payable)\s*[:\-]?\s*(?:eur|€)?\s*([0-9]+[.,][0-9]{1,2})/i) ||
     t.match(/([0-9]+[.,][0-9]{2})\s*(?:€|eur)\b/i);
 
   const priceMatch =
-    t.match(/(?:price\s*\/\s*l|price\s*per\s*liter|unit\s*price)\s*[:\-]?\s*(?:eur|€)?\s*([0-9]+[.,][0-9]{2,3})/i) ||
+    t.match(/(?:price\s*\/\s*l|price\s*per\s*liter|unit\s*price|eur\s*\/\s*l|€\s*\/\s*l)\s*[:\-]?\s*(?:eur|€)?\s*([0-9]+[.,][0-9]{2,3})/i) ||
     t.match(/(?:eur|€)\s*\/\s*l\s*[:\-]?\s*([0-9]+[.,][0-9]{2,3})/i);
 
   const litersMatch =
     t.match(/(?:quantity|qty|liters|litres|\bl\b)\s*[:\-]?\s*([0-9]+[.,][0-9]{2,3})/i) ||
     t.match(/([0-9]+[.,][0-9]{2,3})\s*(?:liters|litres|\bl\b)/i);
 
+  let total = toNum(totalMatch && totalMatch[1]);
+  let price = toNum(priceMatch && priceMatch[1]);
+  let liters = toNum(litersMatch && litersMatch[1]);
+
+  // fallback: derive missing field when 2 are present
+  if (isNaN(liters) && !isNaN(total) && !isNaN(price) && price > 0) liters = total / price;
+  if (isNaN(price) && !isNaN(total) && !isNaN(liters) && liters > 0) price = total / liters;
+  if (isNaN(total) && !isNaN(price) && !isNaN(liters)) total = price * liters;
+
   return {
     date,
     station,
-    total: num(totalMatch && totalMatch[1]),
-    pricePerLiter: num(priceMatch && priceMatch[1]),
-    liters: num(litersMatch && litersMatch[1])
+    total: toStr2(total),
+    pricePerLiter: toStr2(price),
+    liters: toStr2(liters)
   };
 };
 
