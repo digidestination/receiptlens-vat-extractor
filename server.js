@@ -5,6 +5,60 @@ const fs = require('fs');
 
 const app = express();
 const port = process.env.PORT || 8787;
+const OCR_SPACE_API_KEY = process.env.OCR_SPACE_API_KEY || '';
+
+const extractDateFromText = (txt) => {
+  if (!txt) return '';
+  const t = String(txt);
+  const patterns = [
+    /(\b\d{4}[\/-]\d{1,2}[\/-]\d{1,2}\b)/,      // YYYY-MM-DD
+    /(\b\d{1,2}[\/-]\d{1,2}[\/-]\d{4}\b)/,      // DD/MM/YYYY
+    /(\b\d{1,2}[. ]\d{1,2}[. ]\d{4}\b)/           // DD.MM.YYYY
+  ];
+  for (const p of patterns) {
+    const m = t.match(p);
+    if (m && m[1]) return m[1].replace(/\./g, '/').replace(/\s+/g, '/');
+  }
+  return '';
+};
+
+const normalizeToISODate = (raw) => {
+  if (!raw) return '';
+  const s = raw.replace(/\s+/g, '/').replace(/-/g, '/');
+  const parts = s.split('/').map(x => x.trim());
+  if (parts.length !== 3) return '';
+  if (parts[0].length === 4) {
+    const [y, m, d] = parts;
+    return `${y.padStart(4,'0')}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
+  }
+  let [d, m, y] = parts;
+  if (y.length === 2) y = `20${y}`;
+  return `${y.padStart(4,'0')}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
+};
+
+const ocrExtractDate = async (filePath) => {
+  if (!OCR_SPACE_API_KEY) return '';
+  try {
+    const b64 = fs.readFileSync(filePath, { encoding: 'base64' });
+    const payload = new URLSearchParams();
+    payload.append('apikey', OCR_SPACE_API_KEY);
+    payload.append('base64Image', `data:image/jpeg;base64,${b64}`);
+    payload.append('language', 'eng');
+    payload.append('isOverlayRequired', 'false');
+
+    const resp = await fetch('https://api.ocr.space/parse/image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: payload.toString()
+    });
+    const data = await resp.json();
+    const parsed = (data?.ParsedResults || []).map(x => x?.ParsedText || '').join('\n');
+    const found = extractDateFromText(parsed);
+    return normalizeToISODate(found);
+  } catch {
+    return '';
+  }
+};
 const uploadDir = path.join(__dirname, 'uploads');
 const dataDir = path.join(__dirname, 'data');
 const dataFile = path.join(dataDir, 'db.json');
@@ -69,6 +123,7 @@ app.get('/', (_, res) => {
 
 app.get('/track', (req, res) => {
   const db = readDb();
+  const prefillDate = (req.query.date || '').toString();
   const rows = db.fuelEntries.slice().reverse();
   const tableRows = rows.map(r => `<tr><td>${r.date || ''}</td><td>${r.station || ''}</td><td>${r.total || ''}</td><td>${r.pricePerLiter || ''}</td><td>${r.liters || ''}</td><td>${r.odometer || ''}</td><td>${r.kmEstimate || ''}</td></tr>`).join('');
   res.send(shell('Track Fuel', `
@@ -85,7 +140,7 @@ app.get('/track', (req, res) => {
     <div class='card'>
       <h3>Add Entry</h3>
       <form action='/fuel' method='post' class='grid-2'>
-        <div><label>Date</label><input type='date' name='date' required></div>
+        <div><label>Date</label><input type='date' name='date' value='${prefillDate}' required></div>
         <div><label>Gas Station</label><input name='station' placeholder='e.g. EKO Latsia' required></div>
         <div><label>Total (€)</label><input name='total' placeholder='e.g. 62.40' required></div>
         <div><label>Price per Liter (€)</label><input name='pricePerLiter' placeholder='e.g. 1.47' required></div>
@@ -166,17 +221,23 @@ app.get('/dashboard', (_, res) => {
   `));
 });
 
-app.post('/upload', upload.array('docs', 20), (req, res) => {
-  const files = (req.files || []).map(f => ({ name: f.originalname, savedAs: f.filename, size: f.size }));
-  const list = files.map(f => `<li>${f.name} (${Math.round((f.size||0)/1024)} KB)</li>`).join('');
+app.post('/upload', upload.array('docs', 20), async (req, res) => {
+  const files = req.files || [];
+  const mapped = files.map(f => ({ name: f.originalname, savedAs: f.filename, size: f.size, path: f.path }));
+  const list = mapped.map(f => `<li>${f.name} (${Math.round((f.size||0)/1024)} KB)</li>`).join('');
+
+  let extractedDate = '';
+  if (mapped[0]) extractedDate = await ocrExtractDate(mapped[0].path);
+
   res.send(shell('Upload Complete', `
     <h1>Receipt uploaded</h1>
-    <p class='muted'>Uploaded <strong>${files.length}</strong> file(s) successfully.</p>
-    ${files.length ? `<div class='card'><h3>Uploaded files</h3><ul>${list}</ul></div>` : ''}
+    <p class='muted'>Uploaded <strong>${mapped.length}</strong> file(s) successfully.</p>
+    ${mapped.length ? `<div class='card'><h3>Uploaded files</h3><ul>${list}</ul></div>` : ''}
     <div class='card'>
-      <h3>Next step</h3>
-      <p class='muted'>For now, please fill the receipt fields manually in <strong>Track Fuel</strong>. OCR auto-fill will be added next.</p>
-      <p><a class='btn' href='/track'>Continue to Track Fuel</a></p>
+      <h3>OCR result</h3>
+      <p class='muted'>Detected receipt date: <strong>${extractedDate || 'Not detected'}</strong></p>
+      <p><a class='btn' href='/track${extractedDate ? `?date=${encodeURIComponent(extractedDate)}` : ''}'>Continue to Track Fuel</a></p>
+      ${!extractedDate ? "<p class='muted'>If OCR misses the date, you can enter it manually.</p>" : ''}
     </div>
   `));
 });

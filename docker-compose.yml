@@ -2,6 +2,8 @@ services:
   receiptlens:
     build: .
     container_name: receiptlens-app
+    env_file:
+      - .env
     ports:
       - "9876:8787"
     restart: unless-stopped
