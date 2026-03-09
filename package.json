@@ -1,0 +1,14 @@
+{
+  "name": "receiptlens-vat-extractor",
+  "version": "0.1.0",
+  "private": false,
+  "description": "ReceiptLens VAT Extractor MVP shell",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1"
+  }
+}

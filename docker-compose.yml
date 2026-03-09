@@ -1,0 +1,7 @@
+services:
+  receiptlens:
+    build: .
+    container_name: receiptlens-app
+    ports:
+      - "8787:8787"
+    restart: unless-stopped
