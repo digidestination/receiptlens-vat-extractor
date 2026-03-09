@@ -36,9 +36,40 @@ const normalizeToISODate = (raw) => {
   return `${y.padStart(4,'0')}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
 };
 
-const ocrExtractDate = async (filePath) => {
-  if (!OCR_SPACE_API_KEY) return '';
+const extractFuelFieldsFromText = (txt) => {
+  const t = String(txt || '');
+  const date = normalizeToISODate(extractDateFromText(t));
+
+  const lines = t.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  const station = lines.find(l => /(eko|petrolina|shell|bp|lukoil|agip|eni|texaco|fuel|station)/i.test(l)) || '';
+
+  const num = (s) => {
+    if (!s) return '';
+    const cleaned = s.replace(',', '.').replace(/[^0-9.]/g, '');
+    return cleaned && !isNaN(Number(cleaned)) ? Number(cleaned).toFixed(2) : '';
+  };
+
+  const totalMatch = t.match(/(?:total|amount|sum|payable|eur|€)\s*[:\-]?\s*([0-9]+[.,][0-9]{1,2})/i) || t.match(/([0-9]+[.,][0-9]{2})\s*(?:€|eur)/i);
+  const priceMatch = t.match(/(?:price\s*\/\s*l|price\s*per\s*liter|€/\s*l|eur\s*\/\s*l|unit\s*price)\s*[:\-]?\s*([0-9]+[.,][0-9]{2,3})/i);
+  const litersMatch = t.match(/(?:liters|litres|l)\s*[:\-]?\s*([0-9]+[.,][0-9]{2,3})/i) || t.match(/([0-9]+[.,][0-9]{2,3})\s*(?:liters|litres|l)\b/i);
+
+  return {
+    date,
+    station,
+    total: num(totalMatch && totalMatch[1]),
+    pricePerLiter: num(priceMatch && priceMatch[1]),
+    liters: num(litersMatch && litersMatch[1])
+  };
+};
+
+const ocrExtractFields = async (filePath) => {
+  if (!OCR_SPACE_API_KEY) return { fields: {}, parsedText: '', error: 'OCR key missing' };
   try {
+    const ext = (path.extname(filePath || '').toLowerCase());
+    if (ext === '.pdf') {
+      return { fields: {}, parsedText: '', error: 'PDF OCR not enabled yet; please upload image for now' };
+    }
+
     const b64 = fs.readFileSync(filePath, { encoding: 'base64' });
     const payload = new URLSearchParams();
     payload.append('apikey', OCR_SPACE_API_KEY);
@@ -52,11 +83,11 @@ const ocrExtractDate = async (filePath) => {
       body: payload.toString()
     });
     const data = await resp.json();
-    const parsed = (data?.ParsedResults || []).map(x => x?.ParsedText || '').join('\n');
-    const found = extractDateFromText(parsed);
-    return normalizeToISODate(found);
+    const parsedText = (data?.ParsedResults || []).map(x => x?.ParsedText || '').join('\n');
+    const fields = extractFuelFieldsFromText(parsedText);
+    return { fields, parsedText, error: '' };
   } catch {
-    return '';
+    return { fields: {}, parsedText: '', error: 'OCR request failed' };
   }
 };
 const uploadDir = path.join(__dirname, 'uploads');
@@ -124,6 +155,10 @@ app.get('/', (_, res) => {
 app.get('/track', (req, res) => {
   const db = readDb();
   const prefillDate = (req.query.date || '').toString();
+  const prefillStation = (req.query.station || '').toString();
+  const prefillTotal = (req.query.total || '').toString();
+  const prefillPrice = (req.query.pricePerLiter || '').toString();
+  const prefillLiters = (req.query.liters || '').toString();
   const rows = db.fuelEntries.slice().reverse();
   const tableRows = rows.map(r => `<tr><td>${r.date || ''}</td><td>${r.station || ''}</td><td>${r.total || ''}</td><td>${r.pricePerLiter || ''}</td><td>${r.liters || ''}</td><td>${r.odometer || ''}</td><td>${r.kmEstimate || ''}</td></tr>`).join('');
   res.send(shell('Track Fuel', `
@@ -132,7 +167,7 @@ app.get('/track', (req, res) => {
       <h3>Upload Fuel Receipt</h3>
       <form action='/upload' method='post' enctype='multipart/form-data'>
         <input type='file' name='docs' multiple accept='.pdf,.jpg,.jpeg,.png'>
-        <p class='muted'>OCR parser wiring is next step; files are stored now.</p>
+        <p class='muted'>OCR tries to auto-fill receipt date, station, total, €/L and liters (best with clear photos).</p>
         <p><button class='btn' type='submit'>Upload</button></p>
       </form>
     </div>
@@ -141,10 +176,10 @@ app.get('/track', (req, res) => {
       <h3>Add Entry</h3>
       <form action='/fuel' method='post' class='grid-2'>
         <div><label>Date</label><input type='date' name='date' value='${prefillDate}' required></div>
-        <div><label>Gas Station</label><input name='station' placeholder='e.g. EKO Latsia' required></div>
-        <div><label>Total (€)</label><input name='total' placeholder='e.g. 62.40' required></div>
-        <div><label>Price per Liter (€)</label><input name='pricePerLiter' placeholder='e.g. 1.47' required></div>
-        <div><label>Total Liters</label><input name='liters' placeholder='e.g. 42.45' required></div>
+        <div><label>Gas Station</label><input name='station' value='${prefillStation}' placeholder='e.g. EKO Latsia' required></div>
+        <div><label>Total (€)</label><input name='total' value='${prefillTotal}' placeholder='e.g. 62.40' required></div>
+        <div><label>Price per Liter (€)</label><input name='pricePerLiter' value='${prefillPrice}' placeholder='e.g. 1.47' required></div>
+        <div><label>Total Liters</label><input name='liters' value='${prefillLiters}' placeholder='e.g. 42.45' required></div>
         <div><label>Odometer (km)</label><input name='odometer' placeholder='e.g. 128440'></div>
         <div><label>Estimated km with current fuel</label><input name='kmEstimate' placeholder='e.g. 530'></div>
         <div style='align-self:end'><button class='btn' type='submit'>Save Entry</button></div>
@@ -226,18 +261,34 @@ app.post('/upload', upload.array('docs', 20), async (req, res) => {
   const mapped = files.map(f => ({ name: f.originalname, savedAs: f.filename, size: f.size, path: f.path }));
   const list = mapped.map(f => `<li>${f.name} (${Math.round((f.size||0)/1024)} KB)</li>`).join('');
 
-  let extractedDate = '';
-  if (mapped[0]) extractedDate = await ocrExtractDate(mapped[0].path);
+  let fields = { date: '', station: '', total: '', pricePerLiter: '', liters: '' };
+  let ocrError = '';
+  if (mapped[0]) {
+    const out = await ocrExtractFields(mapped[0].path);
+    fields = { ...fields, ...(out.fields || {}) };
+    ocrError = out.error || '';
+  }
+
+  const qs = new URLSearchParams();
+  Object.entries(fields).forEach(([k, v]) => { if (v) qs.set(k, String(v)); });
+  const prefillUrl = `/track${qs.toString() ? `?${qs.toString()}` : ''}`;
 
   res.send(shell('Upload Complete', `
     <h1>Receipt uploaded</h1>
     <p class='muted'>Uploaded <strong>${mapped.length}</strong> file(s) successfully.</p>
     ${mapped.length ? `<div class='card'><h3>Uploaded files</h3><ul>${list}</ul></div>` : ''}
     <div class='card'>
-      <h3>OCR result</h3>
-      <p class='muted'>Detected receipt date: <strong>${extractedDate || 'Not detected'}</strong></p>
-      <p><a class='btn' href='/track${extractedDate ? `?date=${encodeURIComponent(extractedDate)}` : ''}'>Continue to Track Fuel</a></p>
-      ${!extractedDate ? "<p class='muted'>If OCR misses the date, you can enter it manually.</p>" : ''}
+      <h3>OCR extracted fields</h3>
+      <table><tbody>
+        <tr><th>Date</th><td>${fields.date || '—'}</td></tr>
+        <tr><th>Gas Station</th><td>${fields.station || '—'}</td></tr>
+        <tr><th>Total (€)</th><td>${fields.total || '—'}</td></tr>
+        <tr><th>Price per Liter (€)</th><td>${fields.pricePerLiter || '—'}</td></tr>
+        <tr><th>Total Liters</th><td>${fields.liters || '—'}</td></tr>
+      </tbody></table>
+      ${ocrError ? `<p class='muted'>${ocrError}</p>` : ''}
+      <p><a class='btn' href='${prefillUrl}'>Use extracted values in Track Fuel</a></p>
+      <p class='muted'>You can edit anything before saving.</p>
     </div>
   `));
 });
