@@ -50,21 +50,37 @@ const extractFuelFieldsFromText = (txt) => {
   };
   const toStr2 = (n) => (isNaN(n) ? '' : n.toFixed(2));
 
-  const totalMatch =
-    t.match(/(?:total\s+amount|total|amount|sum|payable)\s*[:\-]?\s*(?:eur|€)?\s*([0-9]+[.,][0-9]{1,2})/i) ||
-    t.match(/([0-9]+[.,][0-9]{2})\s*(?:€|eur)\b/i);
+  const fromLine = (reLabel, reVal) => {
+    const ln = lines.find(l => reLabel.test(l));
+    if (!ln) return NaN;
+    const m = ln.match(reVal);
+    return toNum(m && m[1]);
+  };
 
-  const priceMatch =
-    t.match(/(?:price\s*\/\s*l|price\s*per\s*liter|unit\s*price|eur\s*\/\s*l|€\s*\/\s*l)\s*[:\-]?\s*(?:eur|€)?\s*([0-9]+[.,][0-9]{2,3})/i) ||
-    t.match(/(?:eur|€)\s*\/\s*l\s*[:\-]?\s*([0-9]+[.,][0-9]{2,3})/i);
+  // line-priority extraction (more reliable for fuel receipts)
+  let liters = fromLine(/quantity|qty|liters|litres|\bl\b/i, /([0-9]+[.,][0-9]{2,3})/);
+  let price  = fromLine(/price|eur\s*\/\s*l|€\s*\/\s*l|unit\s*price/i, /([0-9]+[.,][0-9]{2,3})/);
+  let total  = fromLine(/total\s*amount|\btotal\b|amount|sum|payable/i, /([0-9]+[.,][0-9]{1,2})/);
 
-  const litersMatch =
-    t.match(/(?:quantity|qty|liters|litres|\bl\b)\s*[:\-]?\s*([0-9]+[.,][0-9]{2,3})/i) ||
-    t.match(/([0-9]+[.,][0-9]{2,3})\s*(?:liters|litres|\bl\b)/i);
-
-  let total = toNum(totalMatch && totalMatch[1]);
-  let price = toNum(priceMatch && priceMatch[1]);
-  let liters = toNum(litersMatch && litersMatch[1]);
+  // fallback global extraction
+  if (isNaN(total)) {
+    const totalMatch =
+      t.match(/(?:total\s+amount|total|amount|sum|payable)\s*[:\-]?\s*(?:eur|€)?\s*([0-9]+[.,][0-9]{1,2})/i) ||
+      t.match(/([0-9]+[.,][0-9]{2})\s*(?:€|eur)\b/i);
+    total = toNum(totalMatch && totalMatch[1]);
+  }
+  if (isNaN(price)) {
+    const priceMatch =
+      t.match(/(?:price\s*\/\s*l|price\s*per\s*liter|unit\s*price|eur\s*\/\s*l|€\s*\/\s*l)\s*[:\-]?\s*(?:eur|€)?\s*([0-9]+[.,][0-9]{2,3})/i) ||
+      t.match(/(?:eur|€)\s*\/\s*l\s*[:\-]?\s*([0-9]+[.,][0-9]{2,3})/i);
+    price = toNum(priceMatch && priceMatch[1]);
+  }
+  if (isNaN(liters)) {
+    const litersMatch =
+      t.match(/(?:quantity|qty|liters|litres|\bl\b)\s*[:\-]?\s*([0-9]+[.,][0-9]{2,3})/i) ||
+      t.match(/([0-9]+[.,][0-9]{2,3})\s*(?:liters|litres|\bl\b)/i);
+    liters = toNum(litersMatch && litersMatch[1]);
+  }
 
   // fallback: derive missing field when 2 are present
   if (isNaN(liters) && !isNaN(total) && !isNaN(price) && price > 0) liters = total / price;
